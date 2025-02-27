@@ -1,8 +1,13 @@
+"""
+MCP (Model Context Protocol) server implementation for DeltaTask.
+This server exposes the task service functionality over the MCP protocol.
+"""
+
 from typing import Any
 import uuid
-import logging
 from mcp.server.fastmcp import FastMCP
-from task_service import TaskService  # Import your existing TaskService
+from deltatask import logger
+from deltatask.services import TaskService
 
 # Initialize MCP Server
 mcp = FastMCP("tasks")
@@ -80,6 +85,13 @@ async def get_all_tags() -> list[str]:
     """Get all unique tag names used in tasks."""
     return service.get_all_tags()
 
+# MCP Tool: Get subtasks for a given parent task ID
+@mcp.tool()
+async def get_subtasks(parent_id: str) -> list[dict[str, Any]]:
+    """Get subtasks for a given parent task ID."""
+    return service.get_all_tasks(parent_id=parent_id)
+
 # Run the MCP server
 if __name__ == "__main__":
+    logger.info("Starting DeltaTask MCP server")
     mcp.run(transport='stdio')  # Required for Claude for Desktop
