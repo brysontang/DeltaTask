@@ -63,9 +63,9 @@ async def sync_tasks() -> dict[str, Any]:
 
 # MCP Tool: List all tasks
 @mcp.tool()
-async def list_tasks() -> list[dict[str, Any]]:
-    """List all tasks."""
-    return service.get_all_tasks()
+async def list_tasks(tags: list[str] = None) -> list[dict[str, Any]]:
+    """List all tasks with optional tags, if you user asks for a tag, please provide it in the request."""
+    return service.get_all_tasks(tags=tags)
 
 # MCP Tool: Get task statistics
 @mcp.tool()
@@ -76,7 +76,7 @@ async def get_statistics() -> dict[str, Any]:
 # MCP Tool: Create subtasks for a task
 @mcp.tool()
 async def create_subtasks(task_id: str, subtasks: list[dict[str, Any]]) -> dict[str, Any]:
-    """Create multiple subtasks for a parent task."""
+    """Create multiple subtasks for a parent task with categories."""
     return service.create_subtasks(task_id, subtasks)
 
 # MCP Tool: Get all tags

@@ -147,6 +147,29 @@ This vault contains your tasks organized as a graph of interconnected notes.
         if len(sanitized) > 100:
             sanitized = sanitized[:100]
         return sanitized
+        
+    def _get_parent_title(self, parent_id: str) -> str:
+        """Get the title of a parent task by its ID."""
+        # Find parent file with any name pattern that starts with the parent ID
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        parent_file = None
+        
+        if os.path.exists(tasks_dir):
+            for filename in os.listdir(tasks_dir):
+                if filename.startswith(f"{parent_id}") and filename.endswith(".md"):
+                    parent_file = os.path.join(tasks_dir, filename)
+                    break
+        
+        if not parent_file or not os.path.exists(parent_file):
+            logger.warning(f"Parent file not found for parent ID: {parent_id} when getting title")
+            return None
+            
+        try:
+            post = frontmatter.load(parent_file)
+            return post.get("title", f"Parent Task {parent_id}")
+        except Exception as e:
+            logger.error(f"Error getting parent title for {parent_id}: {e}", exc_info=True)
+            return None
     
     def create_task_file(self, task: Dict[str, Any]) -> None:
         """Create a markdown file for a task."""
@@ -192,11 +215,20 @@ This vault contains your tasks organized as a graph of interconnected notes.
             # Add links section for related tasks
             content += "\n\n## Related\n\n"
             
+            # Add parent link in related section if this is a subtask
+            if "parent_id" in task and task["parent_id"]:
+                parent_id = task["parent_id"]
+                # Get parent title if available
+                parent_title = self._get_parent_title(parent_id) or f"Parent Task {parent_id}"
+                sanitized_parent_title = self._sanitize_filename(parent_title)
+                content += f"- **Parent:** [[tasks/{parent_id} - {sanitized_parent_title}]]\n"
+            
             # Create the file with frontmatter
             post = frontmatter.Post(content, **metadata)
             
-            # Determine filename and path - now using just the ID for consistency
-            filename = f"{task['id']}.md"
+            # Create a filename using ID and title for better readability in graph view
+            sanitized_title = self._sanitize_filename(task['title'])
+            filename = f"{task['id']} - {sanitized_title}.md"
             file_path = os.path.join(self.vault_path, "tasks", filename)
             
             try:
@@ -227,20 +259,30 @@ This vault contains your tasks organized as a graph of interconnected notes.
     
     def _update_parent_subtasks(self, parent_id: str, subtask_id: str, subtask_title: str) -> None:
         """Update a parent task file to include a link to a new subtask."""
-        parent_file = os.path.join(self.vault_path, "tasks", f"{parent_id}.md")
-        if not os.path.exists(parent_file):
-            logger.warning(f"Parent file not found: {parent_file}")
+        # Find parent file with any name pattern that starts with the parent ID
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        parent_file = None
+        
+        if os.path.exists(tasks_dir):
+            for filename in os.listdir(tasks_dir):
+                if filename.startswith(f"{parent_id}") and filename.endswith(".md"):
+                    parent_file = os.path.join(tasks_dir, filename)
+                    break
+        
+        if not parent_file or not os.path.exists(parent_file):
+            logger.warning(f"Parent file not found for parent ID: {parent_id}")
             return
             
         try:
             post = frontmatter.load(parent_file)
             content = post.content
             
-            # Find the Subtasks section and add the link - now linking by ID only
+            # Find the Subtasks section and add the link - now linking with tasks/ prefix and sanitized title
             subtasks_section = "## Subtasks\n\n"
             if subtasks_section in content:
-                # Create link using ID instead of title in filename
-                link = f"- [[{subtask_id}|{subtask_title}]]\n"
+                # Create link using tasks/ prefix and sanitized title
+                sanitized_title = self._sanitize_filename(subtask_title)
+                link = f"- [[tasks/{subtask_id} - {sanitized_title}]]\n"
                 # Insert after the section header
                 sections = content.split(subtasks_section)
                 if len(sections) >= 2:
@@ -264,8 +306,9 @@ This vault contains your tasks organized as a graph of interconnected notes.
                 tag_filename = self._sanitize_filename(tag)
                 tag_path = os.path.join(self.vault_path, "tags", f"{tag_filename}.md")
                 
-                # Link using ID instead of filename with title
-                link = f"- [[tasks/{task_id}|{task_title}]]\n"
+                # Link using tasks/ prefix and sanitized title
+                sanitized_title = self._sanitize_filename(task_title)
+                link = f"- [[tasks/{task_id} - {sanitized_title}]]\n"
                 
                 if os.path.exists(tag_path):
                     try:
@@ -293,18 +336,29 @@ This vault contains your tasks organized as a graph of interconnected notes.
     
     def update_task_file(self, task: Dict[str, Any]) -> None:
         """Update a task markdown file."""
-        task_file = os.path.join(self.vault_path, "tasks", f"{task['id']}.md")
+        # First try with the new format (ID - title)
+        sanitized_title = self._sanitize_filename(task["title"]) 
+        task_file = os.path.join(self.vault_path, "tasks", f"{task['id']} - {sanitized_title}.md")
+        
+        # If not found, try the old format (just ID)
         if not os.path.exists(task_file):
-            # If file doesn't exist, create it
-            logger.info(f"Task file {task['id']} not found, creating new file")
-            self.create_task_file(task)
-            return
+            old_format_file = os.path.join(self.vault_path, "tasks", f"{task['id']}.md")
+            if os.path.exists(old_format_file):
+                logger.info(f"Found task file in old format, using: {old_format_file}")
+                task_file = old_format_file
+            else:
+                # If file doesn't exist in either format, create it
+                logger.info(f"Task file {task['id']} not found, creating new file")
+                self.create_task_file(task)
+                return
             
         try:
             post = frontmatter.load(task_file)
             
             # Update frontmatter fields
-            post["title"] = task["title"]
+            old_title = post.get("title", "")
+            new_title = task["title"]
+            post["title"] = new_title
             post["updated"] = task.get("updated", datetime.now().isoformat())
             post["urgency"] = task.get("urgency", post.get("urgency", 1))
             post["effort"] = task.get("effort", post.get("effort", 1))
@@ -314,6 +368,10 @@ This vault contains your tasks organized as a graph of interconnected notes.
                 post["deadline"] = task["deadline"]
             elif "deadline" in post and task.get("deadline") is None:
                 del post["deadline"]
+                
+            # If title has changed, update links in all child tasks
+            if old_title != new_title:
+                self._update_child_parent_links(task["id"], new_title)
                 
             # Handle description separately
             if "description" in task:
@@ -364,6 +422,106 @@ This vault contains your tasks organized as a graph of interconnected notes.
             logger.error(f"Error updating task file {task['id']}: {e}", exc_info=True)
             raise
     
+    def _remove_parent_links_from_children(self, parent_id: str) -> None:
+        """Remove parent links from all child tasks when a parent task is deleted."""
+        logger.info(f"Removing parent links in child tasks for deleted parent {parent_id}")
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        
+        if not os.path.exists(tasks_dir):
+            logger.warning(f"Tasks directory not found when removing child parent links")
+            return
+            
+        try:
+            # Find all child task files
+            for filename in os.listdir(tasks_dir):
+                if not filename.endswith(".md") or filename in ["all.md", "urgent.md", "today.md", "overdue.md"]:
+                    continue
+                    
+                file_path = os.path.join(tasks_dir, filename)
+                
+                try:
+                    post = frontmatter.load(file_path)
+                    
+                    # Check if this task has the target parent
+                    if post.get("parent") == parent_id:
+                        # Remove the parent reference from frontmatter
+                        if "parent" in post:
+                            del post["parent"]
+                        
+                        content = post.content
+                        
+                        # Remove the parent link from the content - updated for tasks/ prefix
+                        parent_link_pattern = f"- \\*\\*Parent:\\*\\* \\[\\[tasks/{parent_id} - [^\\]]+\\]\\]\n"
+                        updated_content = re.sub(parent_link_pattern, "", content)
+                        
+                        if updated_content != content:
+                            post.content = updated_content
+                            
+                            with open(file_path, "wb") as f:
+                                frontmatter.dump(post, f)
+                            logger.info(f"Removed parent link from child task {post.get('id')}")
+                            
+                except Exception as e:
+                    logger.error(f"Error removing parent link from child task file {filename}: {e}", exc_info=True)
+                    
+        except Exception as e:
+            logger.error(f"Error removing child parent links: {e}", exc_info=True)
+    
+    def _update_child_parent_links(self, parent_id: str, new_parent_title: str) -> None:
+        """Update parent links in all child tasks when a parent's title changes."""
+        logger.info(f"Updating parent links in child tasks for parent {parent_id}")
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        
+        if not os.path.exists(tasks_dir):
+            logger.warning(f"Tasks directory not found when updating child parent links")
+            return
+            
+        try:
+            # Find all child task files
+            for filename in os.listdir(tasks_dir):
+                if not filename.endswith(".md") or filename in ["all.md", "urgent.md", "today.md", "overdue.md"]:
+                    continue
+                    
+                file_path = os.path.join(tasks_dir, filename)
+                
+                try:
+                    post = frontmatter.load(file_path)
+                    
+                    # Check if this task has the target parent
+                    if post.get("parent") == parent_id:
+                        content = post.content
+                        
+                        # Replace the parent link with updated title - updated for tasks/ prefix
+                        sanitized_parent_title = self._sanitize_filename(new_parent_title)
+                        parent_link_pattern = f"- \\*\\*Parent:\\*\\* \\[\\[tasks/{parent_id} - [^\\]]+\\]\\]"
+                        new_parent_link = f"- **Parent:** [[tasks/{parent_id} - {sanitized_parent_title}]]"
+                        
+                        if re.search(parent_link_pattern, content):
+                            # Replace the existing link
+                            updated_content = re.sub(parent_link_pattern, new_parent_link, content)
+                            post.content = updated_content
+                            
+                            with open(file_path, "wb") as f:
+                                frontmatter.dump(post, f)
+                            logger.info(f"Updated parent link in child task {post.get('id')}")
+                        else:
+                            # Add the parent link if it doesn't exist
+                            related_section = "## Related\n\n"
+                            if related_section in content:
+                                sections = content.split(related_section)
+                                new_content = sections[0] + related_section + new_parent_link + "\n" + sections[1]
+                                post.content = new_content
+                                
+                                with open(file_path, "wb") as f:
+                                    frontmatter.dump(post, f)
+                                logger.info(f"Added parent link in child task {post.get('id')}")
+                            
+                except Exception as e:
+                    logger.error(f"Error updating parent link in child task file {filename}: {e}", exc_info=True)
+                    
+        except Exception as e:
+            logger.error(f"Error updating child parent links: {e}", exc_info=True)
+    
     def _remove_task_from_tag(self, tag: str, task_id: str) -> None:
         """Remove a task link from a tag file."""
         tag_filename = self._sanitize_filename(tag)
@@ -377,8 +535,8 @@ This vault contains your tasks organized as a graph of interconnected notes.
             with open(tag_path, "r") as f:
                 lines = f.readlines()
             
-            # Filter out the line with this task ID
-            new_lines = [line for line in lines if task_id not in line]
+            # Filter out the line with this task ID - updated for tasks/ prefix
+            new_lines = [line for line in lines if f"tasks/{task_id} -" not in line]
             
             # If we only have the header left, delete the file
             if len(new_lines) <= 3 and new_lines and new_lines[0].startswith("# "):
@@ -402,16 +560,32 @@ This vault contains your tasks organized as a graph of interconnected notes.
     
     def delete_task_file(self, task_id: str) -> None:
         """Delete a task markdown file."""
-        task_file = os.path.join(self.vault_path, "tasks", f"{task_id}.md")
-        if not os.path.exists(task_file):
+        # Try to find the task file with any name pattern that starts with the task ID
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        matching_files = []
+        
+        if os.path.exists(tasks_dir):
+            for filename in os.listdir(tasks_dir):
+                if filename.startswith(f"{task_id}") and filename.endswith(".md"):
+                    matching_files.append(os.path.join(tasks_dir, filename))
+        
+        if not matching_files:
             logger.warning(f"Task file {task_id} not found when attempting to delete")
             return
+            
+        # Use the first matching file
+        task_file = matching_files[0]
             
         try:
             # Get task data before deletion
             post = frontmatter.load(task_file)
             parent_id = post.get("parent")
             tags = post.get("tags", [])
+            task_title = post.get("title", f"Task {task_id}")
+            
+            # Remove this task from all child tasks' parent link
+            # This ensures if a parent is deleted, child tasks no longer reference it
+            self._remove_parent_links_from_children(task_id)
             
             # Remove from parent's subtasks list
             if parent_id:
@@ -447,19 +621,28 @@ This vault contains your tasks organized as a graph of interconnected notes.
     
     def _remove_from_parent_subtasks(self, parent_id: str, subtask_id: str) -> None:
         """Remove a subtask link from a parent task file."""
-        parent_file = os.path.join(self.vault_path, "tasks", f"{parent_id}.md")
-        if not os.path.exists(parent_file):
-            logger.warning(f"Parent file {parent_id} not found when removing subtask {subtask_id}")
+        # Find parent file with any name pattern that starts with the parent ID
+        tasks_dir = os.path.join(self.vault_path, "tasks")
+        parent_file = None
+        
+        if os.path.exists(tasks_dir):
+            for filename in os.listdir(tasks_dir):
+                if filename.startswith(f"{parent_id}") and filename.endswith(".md"):
+                    parent_file = os.path.join(tasks_dir, filename)
+                    break
+        
+        if not parent_file or not os.path.exists(parent_file):
+            logger.warning(f"Parent file not found for parent ID: {parent_id} when removing subtask {subtask_id}")
             return
             
         try:
             post = frontmatter.load(parent_file)
             content = post.content
             
-            # Find and remove the link to the subtask - now checking for ID-based link
+            # Find and remove the link to the subtask - updated for tasks/ prefix
             lines = content.split('\n')
-            # Look for lines containing the subtask ID in a link
-            new_lines = [line for line in lines if f"[[{subtask_id}|" not in line]
+            # Look for lines containing the subtask ID in a link with tasks/ prefix
+            new_lines = [line for line in lines if f"[[tasks/{subtask_id} -" not in line]
             
             if len(new_lines) != len(lines):
                 logger.info(f"Removed subtask {subtask_id} from parent {parent_id}")
@@ -495,7 +678,8 @@ This vault contains your tasks organized as a graph of interconnected notes.
                     for task in tasks:
                         completed = "✅ " if task.get('completed', False) else ""
                         deadline = f" (Due: {task.get('deadline', 'No deadline')})" if 'deadline' in task else ""
-                        f.write(f"- {completed}[[{task['id']}|{task['title']}]]{deadline}\n")
+                        sanitized_title = self._sanitize_filename(task['title'])
+                        f.write(f"- {completed}[[tasks/{task['id']} - {sanitized_title}]]{deadline}\n")
                 else:
                     f.write("No tasks found.\n")
             logger.info("Updated All Tasks view")
@@ -513,7 +697,8 @@ This vault contains your tasks organized as a graph of interconnected notes.
                     for task in urgent_tasks:
                         urgency = "🔥" * task.get('urgency', 1)
                         deadline = f" (Due: {task.get('deadline', 'No deadline')})" if 'deadline' in task else ""
-                        f.write(f"- {urgency} [[{task['id']}|{task['title']}]]{deadline}\n")
+                        sanitized_title = self._sanitize_filename(task['title'])
+                        f.write(f"- {urgency} [[tasks/{task['id']} - {sanitized_title}]]{deadline}\n")
                 else:
                     f.write("No urgent tasks found.\n")
             logger.info(f"Updated Urgent Tasks view with {len(urgent_tasks) if 'urgent_tasks' in locals() else 0} tasks")
@@ -531,7 +716,8 @@ This vault contains your tasks organized as a graph of interconnected notes.
                 if today_tasks:
                     for task in today_tasks:
                         urgency = "🔥" * task.get('urgency', 1)
-                        f.write(f"- {urgency} [[{task['id']}|{task['title']}]]\n")
+                        sanitized_title = self._sanitize_filename(task['title'])
+                        f.write(f"- {urgency} [[tasks/{task['id']} - {sanitized_title}]]\n")
                 else:
                     f.write("No tasks due today.\n")
             logger.info(f"Updated Today's Tasks view with {len(today_tasks) if 'today_tasks' in locals() else 0} tasks")
@@ -551,7 +737,8 @@ This vault contains your tasks organized as a graph of interconnected notes.
                     for task in overdue_tasks:
                         urgency = "🔥" * task.get('urgency', 1)
                         deadline = f" (Due: {task.get('deadline')})"
-                        f.write(f"- {urgency} [[{task['id']}|{task['title']}]]{deadline}\n")
+                        sanitized_title = self._sanitize_filename(task['title'])
+                        f.write(f"- {urgency} [[tasks/{task['id']} - {sanitized_title}]]{deadline}\n")
                 else:
                     f.write("No overdue tasks.\n")
             logger.info(f"Updated Overdue Tasks view with {len(overdue_tasks) if 'overdue_tasks' in locals() else 0} tasks")
@@ -559,7 +746,6 @@ This vault contains your tasks organized as a graph of interconnected notes.
             logger.error(f"Error updating Overdue Tasks view: {e}", exc_info=True)
         except Exception as e:
             logger.error(f"Unexpected error updating task views: {e}", exc_info=True)
-    
     def create_statistics_file(self, stats: Dict[str, Any]) -> None:
         """Create a statistics markdown file."""
         stats_path = os.path.join(self.vault_path, "statistics.md")
