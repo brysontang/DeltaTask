@@ -91,7 +91,15 @@ async def get_subtasks(parent_id: str) -> list[dict[str, Any]]:
     """Get subtasks for a given parent task ID."""
     return service.get_all_tasks(parent_id=parent_id)
 
+# MCP Tool: Finish a task
+@mcp.tool()
+async def finish_task(task_id: str) -> dict[str, Any]:
+    """Mark a task as completed."""
+    return service.update_task_by_id(task_id, {"completed": True})
+
+import sys
 # Run the MCP server
 if __name__ == "__main__":
+    print('...', file=sys.stderr)
     logger.info("Starting DeltaTask MCP server")
     mcp.run(transport='stdio')  # Required for Claude for Desktop
