@@ -10,7 +10,7 @@ from deltatask import logger
 from deltatask.services import TaskService
 
 # Initialize MCP Server
-mcp = FastMCP("tasks")
+mcp = FastMCP("DeltaTask", port=8765)
 service = TaskService()
 
 # MCP Tool: Get task by ID
@@ -97,9 +97,7 @@ async def finish_task(task_id: str) -> dict[str, Any]:
     """Mark a task as completed."""
     return service.update_task_by_id(task_id, {"completed": True})
 
-import sys
 # Run the MCP server
 if __name__ == "__main__":
-    print('...', file=sys.stderr)
     logger.info("Starting DeltaTask MCP server")
     mcp.run(transport='stdio')  # Required for Claude for Desktop
